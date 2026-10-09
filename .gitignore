@@ -1,0 +1,20 @@
+# Xcode
+*.xcodeproj/
+!*.xcodeproj/project.pbxproj
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+.build/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+# Swift PM
+.swiftpm/
+Package.resolved
+# macOS
+.DS_Store
+# xcodegen output is regenerated from project.yml
+Inkwell.xcodeproj/

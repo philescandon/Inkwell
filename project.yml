@@ -1,0 +1,87 @@
+# Inkwell — xcodegen spec. One multiplatform app target, one shared source tree.
+# Designed and Architected by: Phillip Escandon
+name: Inkwell
+options:
+  bundleIdPrefix: com.escandon
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "15.0"
+    iOS: "18.0"
+  xcodeVersion: "27.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+targets:
+  Inkwell:
+    type: application
+    supportedDestinations: [macOS, iOS]
+    sources:
+      - path: Inkwell
+        excludes: ["Info.plist"]
+    entitlements:
+      path: Inkwell/App/Inkwell.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.files.user-selected.read-write: true
+        com.apple.security.files.bookmarks.app-scope: true
+    info:
+      path: Inkwell/App/Info.plist
+      properties:
+        CFBundleName: Inkwell
+        CFBundleDisplayName: Inkwell
+        NSHumanReadableCopyright: "Designed and Architected by: Phillip Escandon"
+        LSApplicationCategoryType: public.app-category.productivity
+        LSSupportsOpeningDocumentsInPlace: true
+        UISupportsDocumentBrowser: true
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Markdown Document
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Owner
+            LSItemContentTypes: [net.daringfireball.markdown]
+          - CFBundleTypeName: Plain Text
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.plain-text]
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: net.daringfireball.markdown
+            UTTypeDescription: Markdown Document
+            UTTypeConformsTo: [public.plain-text]
+            UTTypeTagSpecification:
+              public.filename-extension: [md, markdown, mdown]
+              public.mime-type: [text/markdown]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.escandon.inkwell
+        # Local builds with no Apple team: ad-hoc "Sign to Run Locally" on macOS, unsigned on the simulator.
+        # Target-level so xcodegen's default "iPhone Developer" identity does not win.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        "CODE_SIGN_IDENTITY[sdk=iphonesimulator*]": ""
+        DEVELOPMENT_TEAM: ""
+        PROVISIONING_PROFILE_SPECIFIER: ""
+        PRODUCT_NAME: Inkwell
+        TARGETED_DEVICE_FAMILY: "2"
+        SUPPORTS_MACCATALYST: NO
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_PREVIEWS: YES
+        SWIFT_EMIT_LOC_STRINGS: NO
+schemes:
+  Inkwell:
+    build:
+      targets:
+        Inkwell: all
+    run:
+      config: Debug
