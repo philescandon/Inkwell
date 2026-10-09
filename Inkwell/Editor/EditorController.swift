@@ -229,8 +229,12 @@ final class EditorController {
 
     // MARK: - Export
 
-    func html(title: String) -> String {
-        MarkdownHTML.document(from: currentText, title: title, css: EditorSettings.shared.theme.css)
+    /// `scripts: .bundled` for the in-app WKWebView (sandbox has no network access, so the mermaid runtime
+    /// must travel with the page); `.cdn` for exported/copied HTML so the file stays small.
+    func html(title: String, scripts: MarkdownHTML.ScriptSource = .cdn) -> String {
+        let theme = EditorSettings.shared.theme
+        return MarkdownHTML.document(from: currentText, title: title, css: theme.css,
+                                     scripts: scripts, mermaidTheme: theme.mermaidTheme)
     }
 
     func copyAsHTML(title: String) {

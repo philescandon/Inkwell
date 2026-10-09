@@ -22,13 +22,19 @@ targets:
     supportedDestinations: [macOS, iOS]
     sources:
       - path: Inkwell
-        excludes: ["Info.plist"]
+        excludes: ["Info.plist", "Resources/**"]
+      # Vendored mermaid.min.js (pinned; see MarkdownHTML.mermaidVersion). Copied, never compiled.
+      - path: Inkwell/Resources
+        buildPhase: resources
     entitlements:
       path: Inkwell/App/Inkwell.entitlements
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
         com.apple.security.files.bookmarks.app-scope: true
+        # WebKit's helper processes refuse to start in a sandboxed app without this, even for local HTML:
+        # the preview window and inline mermaid rendering both need it.
+        com.apple.security.network.client: true
     info:
       path: Inkwell/App/Info.plist
       properties:

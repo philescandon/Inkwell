@@ -1,20 +1,59 @@
 // MarkdownHTML.swift — small dependency-free markdown → HTML converter for preview/export.
-// Scope: headings, paragraphs, fenced code, blockquotes, lists (one nesting level via indent),
-// hr, inline code/bold/italic/strike/links/images. Not a full CommonMark implementation.
+// Scope: headings, paragraphs, fenced code, mermaid diagrams, GFM pipe tables, blockquotes,
+// lists (one nesting level via indent), hr, inline code/bold/italic/strike/links/images.
+// Not a full CommonMark implementation.
 // Designed and Architected by: Phillip Escandon
 import Foundation
 
 enum MarkdownHTML {
-    static func document(from markdown: String, title: String, css: String) -> String {
-        """
+    /// Pinned mermaid release. The same version is vendored at Resources/mermaid.min.js and referenced from the CDN
+    /// on export, so a diagram renders identically in the in-app preview and in an exported file.
+    static let mermaidVersion = "11.17.2"
+
+    /// How the mermaid runtime reaches the page. The app sandbox carries no network entitlement, so the in-app
+    /// preview must inline the bundled copy; an exported file is opened in a real browser and can use the CDN.
+    enum ScriptSource {
+        case bundled   // inline the vendored mermaid.min.js (~3.5 MB) into the document
+        case cdn       // <script src="https://cdn.jsdelivr.net/npm/mermaid@…"> (needs a network connection when viewed)
+    }
+
+    static func document(from markdown: String, title: String, css: String,
+                         scripts: ScriptSource = .cdn, mermaidTheme: String = "default") -> String {
+        let html = body(from: markdown)
+        // Only ship the runtime when the document actually has a diagram.
+        let mermaid = html.contains("<pre class=\"mermaid\">") ? mermaidScripts(scripts, theme: mermaidTheme) : ""
+        return """
         <!doctype html>
         <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
         <title>\(escape(title))</title>
         <style>\(css)</style></head>
         <body>
-        \(body(from: markdown))
+        \(html)
+        \(mermaid)
         </body></html>
         """
+    }
+
+    private static func mermaidScripts(_ source: ScriptSource, theme: String) -> String {
+        let runtime: String
+        switch source {
+        case .bundled:
+            if let url = Bundle.main.url(forResource: "mermaid.min", withExtension: "js"),
+               let js = try? String(contentsOf: url, encoding: .utf8) {
+                runtime = "<script>\(js)</script>"
+            } else {
+                // Resource missing from the bundle (misconfigured build): fall back to the CDN rather than show nothing.
+                runtime = cdnTag
+            }
+        case .cdn:
+            runtime = cdnTag
+        }
+        // `theme` is one of mermaid's built-in names (default/dark/neutral/forest), chosen from the editor theme.
+        return runtime + "\n<script>mermaid.initialize({ startOnLoad: true, theme: \"\(escape(theme))\", securityLevel: \"strict\" });</script>"
+    }
+
+    private static var cdnTag: String {
+        "<script src=\"https://cdn.jsdelivr.net/npm/mermaid@\(mermaidVersion)/dist/mermaid.min.js\"></script>"
     }
 
     static func body(from markdown: String) -> String {
@@ -33,7 +72,7 @@ enum MarkdownHTML {
             let line = lines[i]
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
-            // Fenced code
+            // Fenced code (``` or ~~~). A ```mermaid fence becomes a diagram container instead of a code block.
             if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
                 flushParagraph()
                 let lang = trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces)
@@ -42,8 +81,15 @@ enum MarkdownHTML {
                 while i < lines.count, !(lines[i].trimmingCharacters(in: .whitespaces).hasPrefix("```") || lines[i].trimmingCharacters(in: .whitespaces).hasPrefix("~~~")) {
                     code.append(lines[i]); i += 1
                 }
-                let cls = lang.isEmpty ? "" : " class=\"language-\(escape(lang))\""
-                out.append("<pre><code\(cls)>\(escape(code.joined(separator: "\n")))</code></pre>")
+                let source = escape(code.joined(separator: "\n"))
+                if lang.lowercased() == "mermaid" {
+                    // Escaping is correct here: mermaid reads the element's textContent, so `&lt;br/&gt;` comes
+                    // back as `<br/>` for the renderer while never being parsed as HTML by the page itself.
+                    out.append("<pre class=\"mermaid\">\(source)</pre>")
+                } else {
+                    let cls = lang.isEmpty ? "" : " class=\"language-\(escape(lang))\""
+                    out.append("<pre><code\(cls)>\(source)</code></pre>")
+                }
                 i += 1
                 continue
             }
@@ -60,6 +106,13 @@ enum MarkdownHTML {
             // Horizontal rule
             if trimmed.range(of: #"^([-*_])\s*(\1\s*){2,}$"#, options: .regularExpression) != nil {
                 flushParagraph(); out.append("<hr>"); i += 1; continue
+            }
+
+            // GFM table: a header row followed by a delimiter row with the same cell count.
+            if i + 1 < lines.count, let table = renderTable(lines, &i) {
+                flushParagraph()
+                out.append(table)
+                continue
             }
 
             // Blockquote: gather consecutive '>' lines and recurse
@@ -99,6 +152,80 @@ enum MarkdownHTML {
         let text = rest.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: #"\s+#+\s*$"#, with: "", options: .regularExpression)
         return (hashes.count, text)
     }
+
+    // MARK: Tables
+
+    private enum Align { case none, left, center, right
+        var attr: String {
+            switch self { case .none: ""; case .left: " style=\"text-align:left\""; case .center: " style=\"text-align:center\""; case .right: " style=\"text-align:right\"" }
+        }
+    }
+
+    /// Splits a pipe-table row into cells. Handles an optional leading/trailing pipe, `\|` escapes,
+    /// and pipes inside backtick code spans (common in technical docs: `a|b`).
+    static func tableCells(_ line: String) -> [String]? {
+        var t = line.trimmingCharacters(in: .whitespaces)
+        guard t.contains("|") else { return nil }
+        if t.hasPrefix("|") { t.removeFirst() }
+        if t.hasSuffix("|"), !t.hasSuffix("\\|") { t.removeLast() }
+        var cells: [String] = []
+        var cur = ""
+        var inCode = false
+        var escaped = false
+        for ch in t {
+            if escaped { cur.append(ch == "|" ? "|" : "\\\(ch)"); escaped = false; continue }
+            switch ch {
+            case "\\": escaped = true
+            case "`": inCode.toggle(); cur.append(ch)
+            case "|" where !inCode: cells.append(cur.trimmingCharacters(in: .whitespaces)); cur = ""
+            default: cur.append(ch)
+            }
+        }
+        if escaped { cur.append("\\") }
+        cells.append(cur.trimmingCharacters(in: .whitespaces))
+        return cells
+    }
+
+    /// Delimiter row like `| --- | :---: | ---: |`. Returns per-column alignment, or nil if the line is not one.
+    private static func delimiterAlignments(_ line: String) -> [Align]? {
+        guard let cells = tableCells(line), !cells.isEmpty else { return nil }
+        var result: [Align] = []
+        for c in cells {
+            guard c.range(of: #"^:?-+:?$"#, options: .regularExpression) != nil else { return nil }
+            switch (c.hasPrefix(":"), c.hasSuffix(":")) {
+            case (true, true): result.append(.center)
+            case (true, false): result.append(.left)
+            case (false, true): result.append(.right)
+            default: result.append(.none)
+            }
+        }
+        return result
+    }
+
+    /// Renders a table starting at `lines[i]` (header) if `lines[i+1]` is a matching delimiter row.
+    /// Body rows run until a blank line or a line without a pipe. Short rows are padded, long rows truncated (GFM).
+    private static func renderTable(_ lines: [String], _ i: inout Int) -> String? {
+        guard let header = tableCells(lines[i]),
+              let aligns = delimiterAlignments(lines[i + 1]),
+              header.count == aligns.count else { return nil }
+        let n = header.count
+        var html = "<table>\n<thead><tr>"
+        for (c, a) in zip(header, aligns) { html += "<th\(a.attr)>\(inline(c))</th>" }
+        html += "</tr></thead>\n<tbody>\n"
+        i += 2
+        while i < lines.count {
+            let t = lines[i].trimmingCharacters(in: .whitespaces)
+            guard !t.isEmpty, var cells = tableCells(lines[i]) else { break }
+            if cells.count < n { cells += Array(repeating: "", count: n - cells.count) }
+            html += "<tr>"
+            for (c, a) in zip(cells.prefix(n), aligns) { html += "<td\(a.attr)>\(inline(c))</td>" }
+            html += "</tr>\n"
+            i += 1
+        }
+        return html + "</tbody>\n</table>"
+    }
+
+    // MARK: Lists
 
     private struct ListLine { let indent: Int; let ordered: Bool; let text: String }
 
@@ -154,7 +281,9 @@ enum MarkdownHTML {
         s = replace(s, #"(\*\*|__)(?=\S)(.+?)(?<=\S)\1"#) { "<strong>\($0[2])</strong>" }
         s = replace(s, #"(?<![\w*])(\*|_)(?=\S)(.+?)(?<=\S)\1(?![\w*])"#) { "<em>\($0[2])</em>" }
         s = replace(s, #"~~(?=\S)(.+?)(?<=\S)~~"#) { "<del>\($0[1])</del>" }
-        s = replace(s, #"\u{0000}(\d+)\u{0000}"#) { codeSpans[Int($0[1]) ?? 0] }
+        // ICU regex syntax: `\x{0}` is the NUL placeholder. (A raw string's `\u{0000}` is not an ICU escape, so the
+        // pattern failed to compile and every code span used to leak its placeholder into the output.)
+        s = replace(s, #"\x{0}(\d+)\x{0}"#) { codeSpans[Int($0[1]) ?? 0] }
         return s
     }
 

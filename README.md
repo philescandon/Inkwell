@@ -17,13 +17,15 @@ xcodebuild -scheme Inkwell -destination 'generic/platform=iOS Simulator' build
 
 The `.xcodeproj` is generated and git-ignored; `project.yml` is the source of truth. Signing is ad-hoc ("Sign to Run Locally") so the project builds with no Apple team. To run on a physical iPad, set `DEVELOPMENT_TEAM` in `project.yml` and switch `CODE_SIGN_STYLE` to `Automatic`.
 
-Bundle id: `com.escandon.inkwell`. No third-party dependencies.
+Bundle id: `com.escandon.inkwell`. No third-party Swift dependencies; the only vendored asset is `mermaid.min.js`.
 
 ## Features
 
 - Document-based (`DocumentGroup` + `FileDocument`), opens `.md`/`.markdown`/`.txt` from Finder, Files, and iCloud Drive.
 - Live WYSIWYG styling over raw Markdown: headings, bold, italic, strikethrough, inline code, fenced code blocks, blockquotes, lists, links. Syntax markers show on the caret line and shrink/dim elsewhere.
 - Source mode (plain monospace) and HTML preview (built-in converter, `WKWebView`).
+- **Tables and mermaid diagrams render inline in the editor**, Typora-style. A GFM pipe table (alignment row, `\|` escapes, pipes inside code spans) is drawn as a grid and a ```` ```mermaid ```` fence as a diagram whenever the caret is outside the block; click into it (or arrow into it) and the source reappears for editing. The document text is never changed: the block's source is hidden with attributes and the first line is given the rendered height, and `NoteMarkerLayoutManager` paints over it (see `BlockRenderer`). Diagrams are rasterized by an offscreen `WKWebView` (`MermaidRenderer`) running the vendored runtime; the preview and exported HTML use the same runtime (`Inkwell/Resources/mermaid.min.js`, pinned to `MarkdownHTML.mermaidVersion`), inlined for the preview and referenced from the jsDelivr CDN in exports, so an exported file needs a network connection to draw diagrams.
+- The entitlement `com.apple.security.network.client` is required: without it the sandboxed app's WebKit processes never start, so neither the preview window nor inline diagrams render, even for local HTML.
 - Sidebar folder tree (security-scoped bookmark persists across launches); collapses on compact iPad widths.
 - Outline panel with click-to-jump, word/character/reading-time status bar.
 - Typewriter mode, focus mode, light/dark/sepia themes, adjustable font size.

@@ -56,6 +56,35 @@ final class NoteMarkerLayoutManager: NSLayoutManager {
     /// Distance from the container's left edge to the dot's left edge.
     static let dotInset: CGFloat = 4
 
+    /// Inline table/diagram renderer shared with the styler; `renderer.blocks` is what gets drawn.
+    var renderer: BlockRenderer?
+    /// Called with the width available to rendered blocks whenever the container is resized.
+    var onContentWidthChange: ((CGFloat) -> Void)?
+
+    override func textContainerChangedGeometry(_ container: NSTextContainer) {
+        super.textContainerChangedGeometry(container)
+        onContentWidthChange?(container.size.width - container.lineFragmentPadding * 2)
+    }
+
+    #if os(macOS)
+    /// Spell-check squiggles are temporary attributes; drop them inside collapsed blocks so hidden source
+    /// (mermaid keywords, table cells) does not leave red marks under a rendered diagram or table.
+    override func addTemporaryAttribute(_ attrName: NSAttributedString.Key, value: Any, forCharacterRange charRange: NSRange) {
+        if attrName == .spellingState, intersectsRenderedBlock(charRange) { return }
+        super.addTemporaryAttribute(attrName, value: value, forCharacterRange: charRange)
+    }
+
+    override func addTemporaryAttributes(_ attrs: [NSAttributedString.Key: Any], forCharacterRange charRange: NSRange) {
+        if attrs[.spellingState] != nil, intersectsRenderedBlock(charRange) { return }
+        super.addTemporaryAttributes(attrs, forCharacterRange: charRange)
+    }
+
+    private func intersectsRenderedBlock(_ r: NSRange) -> Bool {
+        guard let renderer else { return false }
+        return MainActor.assumeIsolated { renderer.blocks.contains { NSIntersectionRange($0.range, r).length > 0 } }
+    }
+    #endif
+
     var markers: [NoteMarker] = [] {
         didSet { if markers != oldValue { redrawAll() } }
     }
@@ -81,8 +110,10 @@ final class NoteMarkerLayoutManager: NSLayoutManager {
 
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
-        guard let storage = textStorage, !(markers.isEmpty && highlights.isEmpty) else { return }
+        guard let storage = textStorage else { return }
         let chars = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        drawRenderedBlocks(intersecting: chars, at: origin)
+        guard !(markers.isEmpty && highlights.isEmpty) else { return }
 
         for m in markers where m.location >= chars.location && m.location <= NSMaxRange(chars) {
             guard let line = lineRect(forCharacterAt: m.location, storageLength: storage.length) else { continue }
@@ -141,6 +172,27 @@ final class NoteMarkerLayoutManager: NSLayoutManager {
         return markers.first { m in
             guard let r = lineRect(forCharacterAt: m.location, storageLength: storage.length) else { return false }
             return y >= r.minY && y <= r.maxY
+        }
+    }
+
+    /// Paints each collapsed table/diagram over the tall first line the styler gave its block.
+    private func drawRenderedBlocks(intersecting chars: NSRange, at origin: CGPoint) {
+        // NSLayoutManager draws on the main thread but is not actor-annotated; the renderer is.
+        guard let renderer, let tc = textContainers.first else { return }
+        let pad = tc.lineFragmentPadding
+        // Geometry comes from the (nonisolated) layout manager; only the draw calls hop onto the renderer's actor.
+        let blocks = MainActor.assumeIsolated { renderer.blocks }
+        for b in blocks where NSIntersectionRange(b.range, chars).length > 0 {
+            let glyph = glyphIndexForCharacter(at: b.range.location)
+            guard glyph < numberOfGlyphs else { continue }
+            let frag = lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            let rect = CGRect(x: origin.x + frag.minX + pad, y: origin.y + frag.minY, width: frag.width - pad * 2, height: b.height)
+            MainActor.assumeIsolated {
+                switch b.kind {
+                case .table: renderer.drawTable(renderer.tableLayout(rows: b.payload.components(separatedBy: "\n")), in: rect)
+                case .mermaid: renderer.drawDiagram(source: b.payload, in: rect)
+                }
+            }
         }
     }
 

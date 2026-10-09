@@ -91,7 +91,7 @@ struct ContentView: View {
             if case .success(let url) = result { folderStore.choose(url) }
         }
         .sheet(isPresented: $controller.showPreview) {
-            HTMLPreviewView(html: controller.html(title: title))
+            HTMLPreviewView(html: controller.html(title: title, scripts: .bundled))
         }
         .sheet(isPresented: $controller.showAbout) { AboutView() }
         .sheet(isPresented: $controller.showSettings) { SettingsView() }

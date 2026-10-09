@@ -7,11 +7,13 @@ import AppKit
 typealias PlatformFont = NSFont
 typealias PlatformColor = NSColor
 typealias PlatformTextView = NSTextView
+typealias PlatformView = NSView
 #else
 import UIKit
 typealias PlatformFont = UIFont
 typealias PlatformColor = UIColor
 typealias PlatformTextView = UITextView
+typealias PlatformView = UIView
 #endif
 
 extension PlatformTextView {

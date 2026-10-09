@@ -74,7 +74,22 @@ enum EditorTheme: String, CaseIterable, Identifiable, Sendable {
         blockquote { border-left: 3px solid \(hex(accent)); margin-left: 0; padding-left: 1em; opacity: 0.85; }
         hr { border: none; border-top: 1px solid \(hex(markerText)); }
         h1, h2, h3 { line-height: 1.25; }
+        table { border-collapse: collapse; margin: 1em 0; display: block; max-width: 100%; overflow-x: auto; font-size: 0.95em; }
+        th, td { border: 1px solid \(hex(markerText)); padding: 0.4em 0.8em; text-align: left; vertical-align: top; }
+        th { background: \(hex(codeBackground)); font-weight: 600; }
+        tbody tr:nth-child(even) { background: color-mix(in srgb, \(hex(codeBackground)) 45%, transparent); }
+        pre.mermaid { background: none; padding: 0.5em 0; text-align: center; overflow-x: auto; }
+        pre.mermaid svg { max-width: 100%; height: auto; }
         """
+    }
+
+    /// Mermaid built-in theme that best matches each editor theme (passed to `mermaid.initialize`).
+    var mermaidTheme: String {
+        switch self {
+        case .light: "default"
+        case .dark: "dark"
+        case .sepia: "neutral"
+        }
     }
 
     private func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> PlatformColor {

@@ -18,3 +18,4 @@ Package.resolved
 .DS_Store
 # xcodegen output is regenerated from project.yml
 Inkwell.xcodeproj/
+.gstack/

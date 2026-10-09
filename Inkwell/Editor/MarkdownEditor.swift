@@ -7,13 +7,39 @@ import SwiftUI
 @MainActor
 final class EditorCore {
     let styler = MarkdownStyler()
+    let renderer = BlockRenderer()
     private var lastCursorParagraph = NSRange(location: 0, length: 0)
     private var pendingEdit: NSRange?
     private var needsFullRestyle = true
 
+    init() {
+        styler.renderer = renderer
+    }
+
+    /// Hooks the renderer to a text view: width tracking and async diagram completion both restyle everything
+    /// (block heights change), deferred one runloop turn so we never mutate storage from inside layout.
+    func attach(layoutManager lm: NoteMarkerLayoutManager, textView: PlatformTextView) {
+        lm.renderer = renderer
+        renderer.hostView = textView
+        lm.onContentWidthChange = { [weak self, weak textView] w in
+            guard let self, let tv = textView, abs(w - renderer.width) > 0.5 else { return }
+            renderer.width = w
+            Task { @MainActor in
+                guard let storage = tv.backingStorage else { return }
+                self.fullRestyle(storage: storage, selection: tv.primarySelectedRange)
+            }
+        }
+        renderer.onDiagramReady = { [weak self, weak textView] in
+            guard let self, let tv = textView, let storage = tv.backingStorage else { return }
+            self.fullRestyle(storage: storage, selection: tv.primarySelectedRange)
+        }
+    }
+
     func configChanged(_ config: StyleConfig) -> Bool {
         guard config != styler.config else { return false }
         styler.config = config
+        renderer.theme = config.theme
+        renderer.fontSize = config.fontSize
         needsFullRestyle = true
         return true
     }
@@ -142,6 +168,7 @@ extension MarkdownEditor: NSViewRepresentable {
         scroll.drawsBackground = false
         scroll.documentView = tv
 
+        context.coordinator.core.attach(layoutManager: lm, textView: tv)
         tv.onRevealNotes = { [controller] in controller.revealNotes(atParagraph: $0) }
         tv.onRevealNote = { [controller] in controller.revealNote(id: $0) }
         tv.delegate = context.coordinator
@@ -259,6 +286,7 @@ extension MarkdownEditor: UIViewRepresentable {
         lm.addTextContainer(tc)
         let tv = UITextView(frame: .zero, textContainer: tc)
         lm.hostView = tv
+        context.coordinator.core.attach(layoutManager: lm, textView: tv)
         tv.delegate = context.coordinator
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.noteTapped(_:)))
         tap.delegate = context.coordinator
